@@ -115,3 +115,31 @@ Voici la liste consolidée de toutes les pistes d'amélioration dont nous avons 
 8.  **Export STIX/JSON :** Pour connecter PhishGuard à des SIEM (outils de sécurité d'entreprise).
 9.  **Mode API (FastAPI) :** Séparer le moteur du visuel pour automatiser les scans.
 10. **Sanitized HTML View :** Afficher le mail "visuellement" mais dans une sandbox HTML totalement inerte (sans JS).
+
+🛡️ Threat Intelligence & Corrélation
+[ ] Fuzzy Hashing (SSDeep) : Implémenter le hachage flou pour détecter des variations d'une même campagne de phishing (ex: le même mail mais avec un nom différent).
+
+[ ] Breach Detection : Intégration de l'API HaveIBeenPwned pour vérifier si l'adresse email de la victime a déjà fuité dans le Dark Web.
+
+[ ] Threat Feed Community : Création d'un système de partage P2P où les utilisateurs peuvent partager anonymement les hashs malveillants détectés.
+
+🤖 Automatisation & Alerting
+[ ] Webhooks (Slack/Discord/Teams) : Envoi automatique d'une notification dans un canal ChatOps dès qu'une menace "CRITIQUE" est détectée.
+
+[ ] Auto-Report to Abuse : Bouton pour générer et envoyer automatiquement un mail de signalement au service "Abuse" de l'hébergeur de l'attaquant.
+
+[ ] Telegram Bot Mode : Possibilité de transférer un mail suspect à un Bot Telegram qui répond avec le rapport simplifié.
+
+🔬 Analyse de Code & Scripts
+[ ] JavaScript De-obfuscator : Module pour "nettoyer" et analyser les scripts JS offusqués souvent cachés dans les pièces jointes HTML.
+
+[ ] QR Code Decoding (Quishing) : Détection automatique et extraction des liens malveillants cachés dans les QR Codes (tendance forte du phishing actuel).
+
+[ ] Macro Extraction : Analyse spécifique des fichiers Office (.docx, .xlsx) pour extraire et scanner le code VBA (Macros) sans ouvrir le fichier.
+
+⚙️ Architecture & Performance
+[ ] File Queue System (Celery/Redis) : Gestion asynchrone des scans pour permettre l'analyse de centaines de mails simultanément sans bloquer l'interface.
+
+[ ] Plugin Outlook/Gmail : Développement d'un add-in pour envoyer le mail à PhishGuard directement depuis le client de messagerie.
+
+[ ] Multi-User Auth (RBAC) : Gestion de rôles (Admin, Analyste, Visiteur) pour les équipes SOC.
