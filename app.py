@@ -1,7 +1,8 @@
 import streamlit as st
 from streamlit_folium import st_folium
+import tldextract
 
-# Imports Modules
+# --- IMPORTS MODULES DE BASE ---
 from modules.parser import EmailParser
 from modules.analyzer import FraudDetector
 from modules.geolocation import get_ip_location, generate_map
@@ -10,8 +11,16 @@ from modules.report import generate_pdf
 from modules.urlscan import UrlScanRadar
 from modules.abuseipdb import check_ip_reputation
 
+# --- IMPORTS MODULES OMEGA (Avancés) ---
+from modules.whois_checker import check_whois
+from modules.dns_checker import check_dns_security
+from modules.homoglyphs import check_homoglyphs
+from modules.route_graph import generate_route_graph
+from modules.ocr_scanner import scan_image_for_text
+from modules.sentiment import SentimentScanner  # <--- NOUVEAU MODULE
+
 # Config
-st.set_page_config(page_title="PhishGuard Ultimate", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="PhishGuard OMEGA", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -24,83 +33,92 @@ st.markdown("""
 
 st.markdown('<h1 class="main-title">🛡️ PhishGuard</h1>', unsafe_allow_html=True)
 
-# Cache
+# Gestion Mémoire
 if 'scan_results' not in st.session_state:
     st.session_state['scan_results'] = None
 
 col1, col2 = st.columns([1, 1])
 
-# --- GAUCHE : INPUT (ONGLETS) ---
+# --- GAUCHE : INPUT ---
 with col1:
     st.subheader("📨 Entrée")
-    
-    # Onglets pour choisir le mode d'entrée
-    tab_text, tab_file = st.tabs(["📝 Copier-Coller", "📂 Fichier (.eml/.msg)"])
+    tab_text, tab_file = st.tabs(["📝 Texte", "📂 Fichier"])
     
     scan_triggered = False
     input_content = None
-    input_type = "text" # 'text', 'eml', 'msg'
+    input_type = "text"
 
     with tab_text:
-        raw_text = st.text_area("Code source du mail", height=400, key="email_text_input")
+        raw_text = st.text_area("Code source", height=400, key="txt_input")
         if st.button("🔍 SCANNER TEXTE", type="primary", use_container_width=True):
-            if raw_text:
-                scan_triggered = True
-                input_content = raw_text
-                input_type = "text"
-            else:
-                st.warning("Zone vide.")
+            scan_triggered = True; input_content = raw_text; input_type = "text"
 
     with tab_file:
-        uploaded_file = st.file_uploader("Glissez votre mail ici", type=['eml', 'msg'])
-        if st.button("🔍 SCANNER FICHIER", type="primary", use_container_width=True, key="btn_file"):
+        uploaded_file = st.file_uploader("Fichier .eml/.msg", type=['eml', 'msg'])
+        if st.button("🔍 SCANNER FICHIER", type="primary", use_container_width=True):
             if uploaded_file:
-                scan_triggered = True
-                input_content = uploaded_file
-                # Détection extension
-                if uploaded_file.name.endswith('.msg'):
-                    input_type = "msg"
-                else:
-                    input_type = "eml"
+                scan_triggered = True; input_content = uploaded_file
+                input_type = "msg" if uploaded_file.name.endswith('.msg') else "eml"
             else:
-                st.warning("Aucun fichier choisi.")
+                st.warning("Aucun fichier sélectionné.")
 
-    # LOGIQUE DE SCAN (CENTRALISÉE)
     if scan_triggered:
+        # Initialisation de TOUS les modules
         parser = EmailParser()
         detector = FraudDetector()
         url_scanner = UrlScanRadar()
+        sentiment_tool = SentimentScanner() # <--- INIT SENTIMENT
         
-        with st.spinner("🔄 Dissection et Analyse en cours..."):
-            # 1. Parsing (adapté au type)
+        with st.spinner("🔄 Analyse Cybernétique Complète..."):
             parsed = parser.parse(input_content, source_type=input_type)
             
             if parsed["status"] == "success":
-                # 2. Fraude
+                # 1. Analyse Standard & Fraude
                 fraud_res = detector.analyze(parsed["headers"], parsed["body_preview"])
                 
-                # 3. Infra
+                # 2. Infra (IPs & Route)
                 ips = parsed["headers"].get("Received-IPs", [])
                 ip_reports = [check_ip_reputation(ip) for ip in ips]
-                ip_locations = [loc for loc in [get_ip_location(ip) for ip in ips] if loc]
+                ip_locations = [get_ip_location(ip) for ip in ips if get_ip_location(ip)]
+                route_viz = generate_route_graph(ips)
                 
-                # 4. URLs
+                # 3. URLs & Domaines (Deep Scan)
                 urls = parsed["urls"]
-                url_report = None
-                trace_report = None
+                url_report = None; trace_report = None
+                domain_info = None
+                
                 if urls:
-                    trace_report = trace_url(urls[0])
-                    url_report = url_scanner.scan(urls[0])
+                    target = urls[0]
+                    trace_report = trace_url(target)
+                    url_report = url_scanner.scan(target)
+                    
+                    try:
+                        ext = tldextract.extract(target)
+                        domain = f"{ext.domain}.{ext.suffix}"
+                        domain_info = {
+                            "name": domain,
+                            "whois": check_whois(domain),
+                            "dns": check_dns_security(domain)
+                        }
+                    except: pass
 
-                # Sauvegarde Mémoire
+                # 4. Forensics (Homoglyphes + Sentiment)
+                # Homoglyphes
+                check_txt = parsed["headers"].get("Subject", "") + " " + parsed["headers"].get("From", "")
+                homoglyphs = check_homoglyphs(check_txt)
+                
+                # Sentiment (On analyse Sujet + Corps)
+                full_text_ai = f"{parsed['headers'].get('Subject', '')}. {parsed['body_preview']}"
+                sentiment_res = sentiment_tool.analyze(full_text_ai)
+
+                # Sauvegarde en mémoire
                 st.session_state['scan_results'] = {
-                    "parsed": parsed,
-                    "fraud": fraud_res,
-                    "ip_reports": ip_reports,
-                    "ip_locations": ip_locations,
-                    "url_report": url_report,
-                    "trace_report": trace_report,
-                    "urls": urls
+                    "parsed": parsed, "fraud": fraud_res,
+                    "ip_reports": ip_reports, "ip_locations": ip_locations,
+                    "url_report": url_report, "trace_report": trace_report, "urls": urls,
+                    "domain_info": domain_info, "homoglyphs": homoglyphs,
+                    "route_viz": route_viz,
+                    "sentiment": sentiment_res # <--- SAVE SENTIMENT
                 }
             else:
                 st.error(f"Erreur technique : {parsed['message']}")
@@ -108,63 +126,113 @@ with col1:
 # --- DROITE : RAPPORT ---
 with col2:
     st.subheader("📊 Rapport Tactique")
-    results = st.session_state['scan_results']
+    res = st.session_state['scan_results']
     
-    if results:
-        parsed = results["parsed"]
-        fraud = results["fraud"]
+    if res:
+        t1, t2, t3, t4 = st.tabs(["🚫 Verdict", "🌐 Infra/DNS", "🔎 Forensics", "📄 PDF"])
         
-        # 1. VERDICT
-        score_color = "red" if fraud["score"] > 50 else "orange" if fraud["score"] > 0 else "green"
-        st.markdown(f"### Verdict: :{score_color}[{fraud['verdict']}]")
-        st.progress(min(fraud["score"], 100))
-        
-        for alert in fraud["alerts"]:
-            st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
+        # --- ONGLET 1 : VERDICT ---
+        with t1:
+            fraud = res["fraud"]
+            score_color = "red" if fraud["score"] > 50 else "orange" if fraud["score"] > 0 else "green"
+            st.markdown(f"### Score: :{score_color}[{fraud['score']}/100] ({fraud['verdict']})")
+            st.progress(min(fraud["score"], 100))
             
-        st.divider()
+            for alert in fraud["alerts"]: st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
+            
+            st.divider()
+            st.markdown("#### 📸 Sandbox Visuelle")
+            if res["url_report"] and res["url_report"].get('status') == 'success':
+                st.image(res["url_report"]['screenshot'], caption="Site Cible", use_container_width=True)
+                if res["url_report"]['malicious']: st.error("🚨 DÉTECTÉ MALVEILLANT PAR URLSCAN")
+                else: st.success("✅ Site Sain selon URLScan")
+            elif not res["urls"]:
+                st.info("Pas de liens web.")
+            else:
+                st.warning("Visualisation indisponible.")
 
-        # 2. PIÈCES JOINTES (NOUVEAU !)
-        st.markdown("### 📎 Pièces Jointes & Virus")
-        attachments = parsed.get("attachments", [])
-        if attachments:
-            for att in attachments:
-                with st.expander(f"📄 {att['filename']} ({att['size']} bytes)"):
-                    st.code(att['hash'], language='text')
-                    # Lien magique VirusTotal (Marche sans API Key !)
-                    vt_link = f"https://www.virustotal.com/gui/file/{att['hash']}"
-                    st.markdown(f"👉 [Vérifier ce Hash sur VirusTotal]({vt_link})", unsafe_allow_html=True)
-                    st.caption("Si VirusTotal connaît ce fichier, il vous dira si c'est un virus.")
-        else:
-            st.info("Aucune pièce jointe détectée.")
+        # --- ONGLET 2 : INFRA ---
+        with t2:
+            if res["domain_info"]:
+                di = res["domain_info"]
+                st.markdown(f"### 🏢 Domaine : `{di['name']}`")
+                c1, c2 = st.columns(2)
+                with c1:
+                    w = di["whois"]
+                    st.markdown("**WHOIS (Âge)**")
+                    if "error" in w: st.error(w["error"])
+                    else:
+                        st.info(f"📅 Création : {w.get('creation_date', '?')}")
+                        st.caption(f"Verdict : {w.get('verdict')}")
+                with c2:
+                    d = di["dns"]
+                    st.markdown("**Sécurité DNS**")
+                    st.write(f"SPF : {d['spf']}")
+                    st.write(f"DMARC : {d['dmarc']}")
+                st.divider()
 
-        st.divider()
+            st.markdown("### 🗺️ Route des Serveurs")
+            if res["route_viz"]:
+                st.graphviz_chart(res["route_viz"])
+            else:
+                st.info("Pas assez de données pour le graphique.")
 
-        # 3. SANDBOX URL
-        st.markdown("### 📸 Sandbox & Liens")
-        url_rep = results["url_report"]
-        if url_rep and url_rep.get('status') == 'success':
-            st.image(url_rep['screenshot'], use_container_width=True)
-            if url_rep['malicious']: st.error("🚨 SITE MALVEILLANT !")
-            else: st.success("✅ Site Sain")
-        elif not results["urls"]:
-            st.info("Pas de liens.")
-        else:
-            st.warning("Scan visuel indisponible.")
+            if res["ip_locations"]:
+                m = generate_map(res["ip_locations"])
+                if m: st_folium(m, height=200, width=600)
+            
+            st.markdown("### 🌍 Réputation IPs")
+            for rep in res["ip_reports"]:
+                # Protection contre l'erreur KeyError si l'API a planté
+                ip_addr = rep.get('ip', 'Inconnue')
+                country = rep.get('country', 'N/A')
+                score = rep.get('score', 0)
+                color = "red" if score > 50 else "green"
+                st.markdown(f"- **{ip_addr}** ({country}) : :{color}[Score Abuse {score}%]")
 
-        st.divider()
+        # --- ONGLET 3 : FORENSICS (Avec Sentiment) ---
+        with t3:
+            # 1. ANALYSE SENTIMENT (VADER)
+            st.markdown("### 🧠 Analyse Psychologique (IA Locale)")
+            sent = res.get("sentiment", {})
+            if sent:
+                c_sent1, c_sent2 = st.columns([3, 1])
+                with c_sent1:
+                    st.markdown(f"**Tonalité détectée :** :{sent['color']}[{sent['verdict']}]")
+                    st.caption("Détection mathématique de l'urgence, de la peur ou de l'euphorie.")
+                with c_sent2:
+                    st.metric("Pression", f"{sent['score']:.2f}")
+            else:
+                st.info("Analyse de sentiment non disponible.")
+            
+            st.divider()
 
-        # 4. INFRA
-        st.markdown("### 🌍 Origine")
-        if results["ip_locations"]:
-            m = generate_map(results["ip_locations"])
-            if m: st_folium(m, height=250, width=700)
-        else:
-            st.info("Localisation impossible.")
+            # 2. HOMOGLYPHES
+            st.markdown("### 🔤 Homoglyphes")
+            if res["homoglyphs"]:
+                st.error("⚠️ Caractères trompeurs détectés !")
+                for h in res["homoglyphs"]: st.write(f"- {h}")
+            else:
+                st.success("✅ Aucun caractère trompeur détecté.")
+            
+            st.divider()
+            
+            # 3. PIECES JOINTES
+            st.markdown("### 📎 Pièces Jointes")
+            atts = res["parsed"].get("attachments", [])
+            if atts:
+                for att in atts:
+                    with st.expander(f"📄 {att['filename']} ({att['size']} bytes)"):
+                        st.code(f"Hash: {att['hash']}")
+                        vt_link = f"https://www.virustotal.com/gui/file/{att['hash']}"
+                        st.markdown(f"👉 [Scanner sur VirusTotal]({vt_link})")
+            else:
+                st.info("Aucune pièce jointe.")
 
-        # PDF
-        pdf_data = generate_pdf(parsed, fraud, results["ip_locations"], [])
-        st.download_button("📄 Rapport PDF", pdf_data, "rapport.pdf", "application/pdf")
+        # --- ONGLET 4 : EXPORT ---
+        with t4:
+            pdf_data = generate_pdf(res["parsed"], res["fraud"], res["ip_locations"], [])
+            st.download_button("📄 Télécharger Rapport PDF Complet", pdf_data, "rapport_omega.pdf", "application/pdf")
 
     else:
-        st.info("En attente d'un mail...")
+        st.info("En attente d'analyse...")
