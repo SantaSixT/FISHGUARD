@@ -1,46 +1,143 @@
 import streamlit as st
+from streamlit_folium import st_folium
 
-# Configuration de la page
-st.set_page_config(page_title="PhishGuard V1", page_icon="🛡️", layout="wide")
+# Imports des modules internes
+from modules.parser import EmailParser
+from modules.radar import VirusTotalRadar
+from modules.analyzer import FraudDetector
+from modules.geolocation import get_ip_location, generate_map
+from modules.tracer import trace_url
+
+# Config
+st.set_page_config(page_title="PhishGuard Elite", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
-    .main-title { font-size: 3em; color: #4CAF50; text-align: center; }
-    .stTextArea textarea { font-size: 0.8em; font-family: monospace; }
+    .main-title { font-size: 3em; color: #4CAF50; text-align: center; font-weight: bold; }
+    .stTextArea textarea { font-size: 0.8em; font-family: 'Courier New', monospace; background-color: #111; color: #0f0; }
+    .alert-box { border: 1px solid #ff4b4b; background-color: #2e1111; padding: 10px; border-radius: 5px; color: #ff4b4b; }
+    .clean-box { border: 1px solid #00ff41; background-color: #112e11; padding: 10px; border-radius: 5px; color: #00ff41; }
+    .redirect-arrow { font-size: 1.2em; color: #f39c12; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="main-title">🛡️ PhishGuard</h1>', unsafe_allow_html=True)
-st.markdown("### Analyseur de Menaces E-mail & Phishing")
-st.markdown("---")
 
-# Zone gauche (Entrée) / Zone droite (Résultats)
+# --- GESTION DE LA MÉMOIRE (Pour que les résultats restent affichés) ---
+if 'analysis_active' not in st.session_state:
+    st.session_state['analysis_active'] = False
+
 col1, col2 = st.columns([1, 1])
 
+# --- GAUCHE : INPUT ---
 with col1:
-    st.subheader("📨 Courrier Suspect")
-    raw_email = st.text_area("Collez le code source du mail ici (Header + Body)", height=400, placeholder="Delivered-To: victime@gmail.com\nReceived: from unknown...")
+    st.subheader("📨 Entrée")
+    # On ajoute key="email_input" pour ne pas perdre le texte
+    raw_email = st.text_area("Code source du mail", height=600, key="email_input", help="Copiez le header + body ici")
     
-    analyze_btn = st.button("🔍 ANALYSER LA MENACE", use_container_width=True)
+    # Quand on clique, on active la mémoire
+    if st.button("🔍 SCANNER MAINTENANT", type="primary", use_container_width=True):
+        st.session_state['analysis_active'] = True
 
+# --- DROITE : RAPPORT ---
 with col2:
-    st.subheader("📊 Rapport d'Investigation")
+    st.subheader("📊 Rapport Tactique")
     
-    if analyze_btn and raw_email:
-        # Placeholder pour les futurs modules
-        st.info("🧬 Démarrage du Dissecteur...")
-        st.write("---")
+    # On vérifie la MÉMOIRE (session_state) au lieu du simple clic
+    if st.session_state['analysis_active'] and raw_email:
         
-        # Simulation d'affichage (pour l'instant)
-        st.error("🚨 ALERTE : Ce mail contient des éléments suspects.")
+        # 1. INITIALISATION
+        parser = EmailParser()
+        radar = VirusTotalRadar()
+        detector = FraudDetector()
         
-        with st.expander("📡 Radar API (VirusTotal)", expanded=True):
-            st.write("Analyse des liens en cours... (À coder)")
+        # Note : Dans une version optimisée, on mettrait aussi les résultats en cache 
+        # pour éviter de tout recalculer au zoom. Pour l'instant, ça relance l'analyse.
+        
+        with st.spinner("🔄 Analyse cybernétique en cours..."):
+            # A. PARSING
+            parsed = parser.parse(raw_email)
             
-        with st.expander("🧠 Analyseur de Fraude"):
-            st.write("Vérification Typosquatting... (À coder)")
-            
-    elif analyze_btn:
-        st.warning("Veuillez coller un mail pour commencer.")
-    else:
-        st.info("En attente d'un échantillon...")
+            if parsed["status"] == "success":
+                # B. LOGIQUE
+                fraud_res = detector.analyze(parsed["headers"], parsed["body_preview"])
+                
+                # --- AFFICHAGE VERDICT ---
+                score_color = "red" if fraud_res["score"] > 50 else "orange" if fraud_res["score"] > 0 else "green"
+                st.markdown(f"### Verdict: :{score_color}[{fraud_res['verdict']}]")
+                st.progress(min(fraud_res["score"], 100))
+                
+                # ALERTES
+                if fraud_res["alerts"]:
+                    for alert in fraud_res["alerts"]:
+                        st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
+                else:
+                    st.markdown("<div class='clean-box'>✅ Aucune anomalie sémantique détectée</div>", unsafe_allow_html=True)
+                
+                st.divider()
+
+                # --- C. RADAR & TRACEUR (OPTION C) ---
+                st.markdown("### 📡 Analyse des Liens (Traceur & VT)")
+                urls = parsed["urls"]
+                
+                if urls:
+                    # On scanne avec VirusTotal
+                    vt_res = radar.scan_urls(urls)
+                    
+                    for i, url in enumerate(urls):
+                        # On lance le traceur de redirection
+                        trace = trace_url(url)
+                        vt_info = vt_res[i] if i < len(vt_res) else {"status": "Non scanné", "score": 0}
+                        
+                        icon = "🔴" if "DANGER" in vt_info['status'] else "✅"
+                        
+                        with st.expander(f"{icon} {url[:40]}..."):
+                            # Affichage Traceur
+                            if trace['redirect_count'] > 0:
+                                st.warning(f"⚠️ {trace['redirect_count']} Redirection(s) détectée(s) !")
+                                for hop in trace['chain']:
+                                    st.text(f"↪ {hop}")
+                                st.markdown(f"**Destination finale :** `{trace['final']}`")
+                            else:
+                                st.success("Lien direct (Pas de redirection cachée)")
+                            
+                            st.write("---")
+                            # Affichage VirusTotal
+                            st.write(f"**Statut VirusTotal:** {vt_info['status']}")
+                            st.write(f"**Moteurs Positifs:** {vt_info['score']}")
+
+                else:
+                    st.info("Aucun lien à scanner.")
+
+                st.divider()
+
+                # --- D. CARTOGRAPHIE (OPTION A) ---
+                st.markdown("### 🌍 Origine de l'attaque")
+                ips = parsed["headers"].get("Received-IPs", [])
+                
+                if ips:
+                    ip_locations = []
+                    for ip in ips:
+                        loc = get_ip_location(ip)
+                        if loc: ip_locations.append(loc)
+                    
+                    if ip_locations:
+                        m = generate_map(ip_locations)
+                        if m:
+                            st_folium(m, height=300, width=700)
+                            for loc in ip_locations:
+                                st.caption(f"📍 **{loc['country']}, {loc['city']}** (ISP: {loc['isp']}) - IP: {loc['ip']}")
+                    else:
+                        st.warning("Impossible de géolocaliser les IPs trouvées.")
+                else:
+                    st.info("Aucune IP extractible dans les headers.")
+
+                # DONNÉES TECHNIQUES
+                with st.expander("📝 En-têtes Bruts"):
+                    st.json(parsed["headers"])
+
+            else:
+                st.error("Erreur de parsing.")
+
+    elif st.session_state['analysis_active'] and not raw_email:
+        st.warning("⚠️ Veuillez coller un mail.")
