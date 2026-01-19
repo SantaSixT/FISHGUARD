@@ -1,15 +1,17 @@
 import streamlit as st
 from streamlit_folium import st_folium
 
-# Imports des modules internes
+# Imports Modules
 from modules.parser import EmailParser
-from modules.radar import VirusTotalRadar
 from modules.analyzer import FraudDetector
 from modules.geolocation import get_ip_location, generate_map
 from modules.tracer import trace_url
+from modules.report import generate_pdf
+from modules.urlscan import UrlScanRadar
+from modules.abuseipdb import check_ip_reputation
 
 # Config
-st.set_page_config(page_title="PhishGuard Elite", page_icon="🛡️", layout="wide")
+st.set_page_config(page_title="PhishGuard Ultimate", page_icon="🛡️", layout="wide")
 
 st.markdown("""
 <style>
@@ -17,127 +19,145 @@ st.markdown("""
     .stTextArea textarea { font-size: 0.8em; font-family: 'Courier New', monospace; background-color: #111; color: #0f0; }
     .alert-box { border: 1px solid #ff4b4b; background-color: #2e1111; padding: 10px; border-radius: 5px; color: #ff4b4b; }
     .clean-box { border: 1px solid #00ff41; background-color: #112e11; padding: 10px; border-radius: 5px; color: #00ff41; }
-    .redirect-arrow { font-size: 1.2em; color: #f39c12; font-weight: bold; }
+    .score-high { color: #ff4b4b; font-weight: bold; }
+    .score-med { color: #ffa500; font-weight: bold; }
+    .score-low { color: #00ff41; font-weight: bold; }
 </style>
 """, unsafe_allow_html=True)
 
 st.markdown('<h1 class="main-title">🛡️ PhishGuard</h1>', unsafe_allow_html=True)
 
-# --- GESTION DE LA MÉMOIRE (Pour que les résultats restent affichés) ---
-if 'analysis_active' not in st.session_state:
-    st.session_state['analysis_active'] = False
+# --- GESTION INTELLIGENTE DE LA MÉMOIRE (CACHE) ---
+if 'scan_results' not in st.session_state:
+    st.session_state['scan_results'] = None
 
 col1, col2 = st.columns([1, 1])
 
 # --- GAUCHE : INPUT ---
 with col1:
     st.subheader("📨 Entrée")
-    # On ajoute key="email_input" pour ne pas perdre le texte
-    raw_email = st.text_area("Code source du mail", height=600, key="email_input", help="Copiez le header + body ici")
+    raw_email = st.text_area("Code source du mail", height=600, key="email_input")
     
-    # Quand on clique, on active la mémoire
+    # LE BOUTON LANCE LE CALCUL UNE SEULE FOIS
     if st.button("🔍 SCANNER MAINTENANT", type="primary", use_container_width=True):
-        st.session_state['analysis_active'] = True
-
-# --- DROITE : RAPPORT ---
-with col2:
-    st.subheader("📊 Rapport Tactique")
-    
-    # On vérifie la MÉMOIRE (session_state) au lieu du simple clic
-    if st.session_state['analysis_active'] and raw_email:
-        
-        # 1. INITIALISATION
-        parser = EmailParser()
-        radar = VirusTotalRadar()
-        detector = FraudDetector()
-        
-        # Note : Dans une version optimisée, on mettrait aussi les résultats en cache 
-        # pour éviter de tout recalculer au zoom. Pour l'instant, ça relance l'analyse.
-        
-        with st.spinner("🔄 Analyse cybernétique en cours..."):
-            # A. PARSING
-            parsed = parser.parse(raw_email)
+        if raw_email:
+            # On instancie les outils
+            parser = EmailParser()
+            detector = FraudDetector()
+            url_scanner = UrlScanRadar()
             
-            if parsed["status"] == "success":
-                # B. LOGIQUE
-                fraud_res = detector.analyze(parsed["headers"], parsed["body_preview"])
+            with st.spinner("🔄 Analyse en cours (API & Intelligence)..."):
+                # 1. Parsing
+                parsed = parser.parse(raw_email)
                 
-                # --- AFFICHAGE VERDICT ---
-                score_color = "red" if fraud_res["score"] > 50 else "orange" if fraud_res["score"] > 0 else "green"
-                st.markdown(f"### Verdict: :{score_color}[{fraud_res['verdict']}]")
-                st.progress(min(fraud_res["score"], 100))
-                
-                # ALERTES
-                if fraud_res["alerts"]:
-                    for alert in fraud_res["alerts"]:
-                        st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
-                else:
-                    st.markdown("<div class='clean-box'>✅ Aucune anomalie sémantique détectée</div>", unsafe_allow_html=True)
-                
-                st.divider()
-
-                # --- C. RADAR & TRACEUR (OPTION C) ---
-                st.markdown("### 📡 Analyse des Liens (Traceur & VT)")
-                urls = parsed["urls"]
-                
-                if urls:
-                    # On scanne avec VirusTotal
-                    vt_res = radar.scan_urls(urls)
+                if parsed["status"] == "success":
+                    # 2. Logique Fraude
+                    fraud_res = detector.analyze(parsed["headers"], parsed["body_preview"])
                     
-                    for i, url in enumerate(urls):
-                        # On lance le traceur de redirection
-                        trace = trace_url(url)
-                        vt_info = vt_res[i] if i < len(vt_res) else {"status": "Non scanné", "score": 0}
-                        
-                        icon = "🔴" if "DANGER" in vt_info['status'] else "✅"
-                        
-                        with st.expander(f"{icon} {url[:40]}..."):
-                            # Affichage Traceur
-                            if trace['redirect_count'] > 0:
-                                st.warning(f"⚠️ {trace['redirect_count']} Redirection(s) détectée(s) !")
-                                for hop in trace['chain']:
-                                    st.text(f"↪ {hop}")
-                                st.markdown(f"**Destination finale :** `{trace['final']}`")
-                            else:
-                                st.success("Lien direct (Pas de redirection cachée)")
-                            
-                            st.write("---")
-                            # Affichage VirusTotal
-                            st.write(f"**Statut VirusTotal:** {vt_info['status']}")
-                            st.write(f"**Moteurs Positifs:** {vt_info['score']}")
-
-                else:
-                    st.info("Aucun lien à scanner.")
-
-                st.divider()
-
-                # --- D. CARTOGRAPHIE (OPTION A) ---
-                st.markdown("### 🌍 Origine de l'attaque")
-                ips = parsed["headers"].get("Received-IPs", [])
-                
-                if ips:
+                    # 3. IPs & Infra
+                    ips = parsed["headers"].get("Received-IPs", [])
+                    ip_reports = []
                     ip_locations = []
                     for ip in ips:
+                        ip_reports.append(check_ip_reputation(ip))
                         loc = get_ip_location(ip)
                         if loc: ip_locations.append(loc)
                     
-                    if ip_locations:
-                        m = generate_map(ip_locations)
-                        if m:
-                            st_folium(m, height=300, width=700)
-                            for loc in ip_locations:
-                                st.caption(f"📍 **{loc['country']}, {loc['city']}** (ISP: {loc['isp']}) - IP: {loc['ip']}")
-                    else:
-                        st.warning("Impossible de géolocaliser les IPs trouvées.")
+                    # 4. URLs
+                    urls = parsed["urls"]
+                    url_report = None
+                    trace_report = None
+                    if urls:
+                        target = urls[0]
+                        trace_report = trace_url(target)
+                        url_report = url_scanner.scan(target)
+
+                    # ON SAUVEGARDE TOUT DANS LA MÉMOIRE
+                    st.session_state['scan_results'] = {
+                        "parsed": parsed,
+                        "fraud": fraud_res,
+                        "ip_reports": ip_reports,
+                        "ip_locations": ip_locations,
+                        "url_report": url_report,
+                        "trace_report": trace_report,
+                        "urls": urls
+                    }
                 else:
-                    st.info("Aucune IP extractible dans les headers.")
+                    st.error("Erreur de parsing.")
+        else:
+            st.warning("Veuillez coller un mail.")
 
-                # DONNÉES TECHNIQUES
-                with st.expander("📝 En-têtes Bruts"):
-                    st.json(parsed["headers"])
+# --- DROITE : AFFICHAGE (LECTURE SEULEMENT) ---
+with col2:
+    st.subheader("📊 Rapport Tactique")
+    
+    # On récupère les résultats depuis la mémoire (pas de recalcul !)
+    results = st.session_state['scan_results']
+    
+    if results:
+        parsed = results["parsed"]
+        fraud_res = results["fraud"]
+        ip_reports = results["ip_reports"]
+        ip_locations = results["ip_locations"]
+        url_report = results["url_report"]
+        trace_report = results["trace_report"]
+        urls = results["urls"]
 
+        # 1. VERDICT
+        score_color = "red" if fraud_res["score"] > 50 else "orange" if fraud_res["score"] > 0 else "green"
+        st.markdown(f"### Verdict: :{score_color}[{fraud_res['verdict']}]")
+        st.progress(min(fraud_res["score"], 100))
+        
+        if fraud_res["alerts"]:
+            for alert in fraud_res["alerts"]:
+                st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
+        else:
+            st.markdown("<div class='clean-box'>✅ Aucune anomalie sémantique</div>", unsafe_allow_html=True)
+        
+        st.divider()
+
+        # 2. SANDBOX VISUEL
+        st.markdown("### 📸 Sandbox & Liens")
+        if url_report and url_report['status'] == 'success':
+            # Correction du Warning : on utilise use_container_width
+            st.image(url_report['screenshot'], caption=f"Capture: {url_report['domain']}", use_container_width=True)
+            
+            if url_report['malicious']:
+                st.error(f"🚨 URLSCAN: MALVEILLANT (Score: {url_report['score']})")
             else:
-                st.error("Erreur de parsing.")
+                st.success(f"✅ URLSCAN: Site Sain (Score: {url_report['score']})")
+                
+            with st.expander("Voir détails redirection"):
+                    st.write(f"**Final:** {trace_report['final']}")
+                    st.write(f"**Redirections:** {trace_report['redirect_count']}")
+        
+        elif urls:
+            st.warning("⚠️ Scan visuel indisponible (Timeout ou Erreur Clé)")
+        else:
+            st.info("Aucun lien à analyser.")
 
-    elif st.session_state['analysis_active'] and not raw_email:
-        st.warning("⚠️ Veuillez coller un mail.")
+        st.divider()
+
+        # 3. INFRASTRUCTURE
+        st.markdown("### 🌍 Origine & Réputation IP")
+        
+        if ip_reports:
+            for rep in ip_reports:
+                color_class = "score-high" if rep['score'] > 50 else "score-low"
+                st.markdown(f"""
+                **IP:** `{rep['ip']}` ({rep['country']}) - ISP: {rep['isp']}<br>
+                Réputation: <span class='{color_class}'>{rep['verdict']} (Confiance Abuse: {rep['score']}%)</span>
+                """, unsafe_allow_html=True)
+        
+        if ip_locations:
+            m = generate_map(ip_locations)
+            if m: st_folium(m, height=250, width=700)
+        else:
+            st.info("Pas d'IP exploitable.")
+
+        # 4. EXPORT PDF
+        pdf_data = generate_pdf(parsed, fraud_res, ip_locations, [])
+        st.download_button("📄 Télécharger Rapport PDF", pdf_data, "rapport.pdf", "application/pdf")
+
+    elif not results:
+        st.info("En attente d'analyse...")
