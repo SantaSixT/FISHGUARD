@@ -17,7 +17,7 @@ from modules.dns_checker import check_dns_security
 from modules.homoglyphs import check_homoglyphs
 from modules.route_graph import generate_route_graph
 from modules.ocr_scanner import scan_image_for_text
-from modules.sentiment import SentimentScanner  # <--- NOUVEAU MODULE
+from modules.sentiment import SentimentScanner
 
 # Config
 st.set_page_config(page_title="PhishGuard OMEGA", page_icon="🛡️", layout="wide")
@@ -67,13 +67,13 @@ with col1:
         parser = EmailParser()
         detector = FraudDetector()
         url_scanner = UrlScanRadar()
-        sentiment_tool = SentimentScanner() # <--- INIT SENTIMENT
+        sentiment_tool = SentimentScanner() 
         
         with st.spinner("🔄 Analyse Cybernétique Complète..."):
             parsed = parser.parse(input_content, source_type=input_type)
             
             if parsed["status"] == "success":
-                # 1. Analyse Standard & Fraude
+                # 1. Analyse Standard & Fraude (Mots-clés)
                 fraud_res = detector.analyze(parsed["headers"], parsed["body_preview"])
                 
                 # 2. Infra (IPs & Route)
@@ -91,7 +91,6 @@ with col1:
                     target = urls[0]
                     trace_report = trace_url(target)
                     url_report = url_scanner.scan(target)
-                    
                     try:
                         ext = tldextract.extract(target)
                         domain = f"{ext.domain}.{ext.suffix}"
@@ -103,13 +102,23 @@ with col1:
                     except: pass
 
                 # 4. Forensics (Homoglyphes + Sentiment)
-                # Homoglyphes
                 check_txt = parsed["headers"].get("Subject", "") + " " + parsed["headers"].get("From", "")
                 homoglyphs = check_homoglyphs(check_txt)
                 
                 # Sentiment (On analyse Sujet + Corps)
                 full_text_ai = f"{parsed['headers'].get('Subject', '')}. {parsed['body_preview']}"
                 sentiment_res = sentiment_tool.analyze(full_text_ai)
+
+                # --- 🧠 FUSION D'INTELLIGENCE (NOUVEAU BLOC) ---
+                # Si l'IA détecte une menace psychologique forte, on force le score global
+                if sentiment_res['score'] <= -0.4:
+                    # On ajoute une alerte prioritaire
+                    fraud_res['alerts'].insert(0, f"🧠 IA : Forte pression psychologique détectée ({sentiment_res['score']})")
+                    
+                    # On force le score à 85 minimum si le détecteur classique l'a raté
+                    if fraud_res['score'] < 85:
+                        fraud_res['score'] = 85
+                        fraud_res['verdict'] = "⛔ DANGEREUX (Analyse Sémantique)"
 
                 # Sauvegarde en mémoire
                 st.session_state['scan_results'] = {
@@ -118,7 +127,7 @@ with col1:
                     "url_report": url_report, "trace_report": trace_report, "urls": urls,
                     "domain_info": domain_info, "homoglyphs": homoglyphs,
                     "route_viz": route_viz,
-                    "sentiment": sentiment_res # <--- SAVE SENTIMENT
+                    "sentiment": sentiment_res
                 }
             else:
                 st.error(f"Erreur technique : {parsed['message']}")
@@ -134,11 +143,14 @@ with col2:
         # --- ONGLET 1 : VERDICT ---
         with t1:
             fraud = res["fraud"]
+            # Logique de couleur dynamique
             score_color = "red" if fraud["score"] > 50 else "orange" if fraud["score"] > 0 else "green"
+            
             st.markdown(f"### Score: :{score_color}[{fraud['score']}/100] ({fraud['verdict']})")
             st.progress(min(fraud["score"], 100))
             
-            for alert in fraud["alerts"]: st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
+            for alert in fraud["alerts"]: 
+                st.markdown(f"<div class='alert-box'>🚨 {alert}</div>", unsafe_allow_html=True)
             
             st.divider()
             st.markdown("#### 📸 Sandbox Visuelle")
@@ -183,16 +195,14 @@ with col2:
             
             st.markdown("### 🌍 Réputation IPs")
             for rep in res["ip_reports"]:
-                # Protection contre l'erreur KeyError si l'API a planté
                 ip_addr = rep.get('ip', 'Inconnue')
                 country = rep.get('country', 'N/A')
                 score = rep.get('score', 0)
                 color = "red" if score > 50 else "green"
                 st.markdown(f"- **{ip_addr}** ({country}) : :{color}[Score Abuse {score}%]")
 
-        # --- ONGLET 3 : FORENSICS (Avec Sentiment) ---
+        # --- ONGLET 3 : FORENSICS ---
         with t3:
-            # 1. ANALYSE SENTIMENT (VADER)
             st.markdown("### 🧠 Analyse Psychologique (IA Locale)")
             sent = res.get("sentiment", {})
             if sent:
@@ -202,12 +212,9 @@ with col2:
                     st.caption("Détection mathématique de l'urgence, de la peur ou de l'euphorie.")
                 with c_sent2:
                     st.metric("Pression", f"{sent['score']:.2f}")
-            else:
-                st.info("Analyse de sentiment non disponible.")
             
             st.divider()
 
-            # 2. HOMOGLYPHES
             st.markdown("### 🔤 Homoglyphes")
             if res["homoglyphs"]:
                 st.error("⚠️ Caractères trompeurs détectés !")
@@ -217,7 +224,6 @@ with col2:
             
             st.divider()
             
-            # 3. PIECES JOINTES
             st.markdown("### 📎 Pièces Jointes")
             atts = res["parsed"].get("attachments", [])
             if atts:
